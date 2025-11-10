@@ -1,0 +1,12 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: karpenter-sqs-subscriber-binding
+subjects:
+  - kind: ServiceAccount
+    name: karpenter-sqs-subscriber
+    namespace: default
+roleRef:
+  kind: ClusterRole
+  name: karpenter-sqs-subscriber-role
+  apiGroup: rbac.authorization.k8s.io

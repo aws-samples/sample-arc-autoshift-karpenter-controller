@@ -1,0 +1,30 @@
+{
+  "version": "0",
+  "id": "12345678-1234-1234-1234-123456789012",
+  "detail-type": "Autoshift In Progress",
+  "source": "aws.arc-zonal-shift",
+  "account": "123456789012",
+  "time": "2024-01-15T10:30:00Z",
+  "region": "us-east-1",
+  "detail": {
+    "version": "1.0",
+    "eventName": "AutoshiftInProgress",
+    "eventSource": "arc-zonal-shift",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "arc-zonal-shift.amazonaws.com",
+    "userAgent": "arc-zonal-shift",
+    "eventTime": "2024-01-15T10:30:00.000Z",
+    "eventType": "AutoshiftInProgress",
+    "recipientAccountId": "123456789012",
+    "serviceEventDetails": {
+      "autoshift": {
+        "appliedStatus": "APPLIED",
+        "awayFrom": "use1-az1",
+        "startTime": "2024-01-15T10:30:00.000Z"
+      }
+    },
+    "metadata": {
+      "awayFrom": "use1-az1"
+    }
+  }
+}
