@@ -72,7 +72,7 @@ To deploy this stack run `cdk deploy --all`
 4. Apply the zonal-autoshift-karpenter deployment.yaml
 
 ## Security
-See [CONTRIBUTING](./CONTRIBUTING) for more information.
+See [CONTRIBUTING](./CONTRIBUTING.md) for more information.
 
 ## License
 This library is licensed under the MIT-0 License. See the LICENSE file.
