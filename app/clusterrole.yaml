@@ -4,8 +4,8 @@ metadata:
   name: karpenter-sqs-subscriber-role
 rules:
   - apiGroups: [""]
-    resources: ["nodes"]
-    verbs: ["get", "list", "watch"]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list", "watch", "update", "patch"]
   - apiGroups: ["karpenter.sh"]
     resources: ["nodepools"]
     verbs: ["get", "list", "watch", "update", "patch", "create", "delete"]

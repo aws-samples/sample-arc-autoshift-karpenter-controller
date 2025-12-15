@@ -3,3 +3,4 @@ constructs>=10.4.2,<11.0.0
 cdk_ecr_deployment==3.0.154
 aws-cdk.lambda-layer-kubectl-v32
 pyyaml
+cdk-nag

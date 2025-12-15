@@ -249,6 +249,8 @@ class EKSClusterStack(Stack):
             roles=[self.karpenter_node_role.role_name],
             instance_profile_name=f"{self.cluster.cluster_name}-KarpenterNodeInstanceProfile"
         )
+        instance_profile.node.add_dependency(self.karpenter_node_role)
+
          # Install Karpenter using Helm
         karpenter_chart = self.cluster.add_helm_chart(
             "karpenter",

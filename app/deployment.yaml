@@ -1,3 +1,8 @@
+# Karpenter SQS Subscriber Deployment
+#
+# To enable the do-not-disrupt feature (label and cordon nodes in impaired AZ):
+# Uncomment the 'args' section in the container spec below
+#
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -17,17 +22,17 @@ spec:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
-            - matchExpressions:
-              - key: zonal-autoshift-karpenter
-                operator: In
-                values:
-                - karpenter
+              - matchExpressions:
+                  - key: zonal-autoshift-karpenter
+                    operator: In
+                    values:
+                      - karpenter
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
-              matchLabels:
-                app: karpenter-sqs-subscriber
-            topologyKey: topology.kubernetes.io/zone
+            - labelSelector:
+                matchLabels:
+                  app: karpenter-sqs-subscriber
+              topologyKey: topology.kubernetes.io/zone
       dnsConfig:
         nameservers:
           - 8.8.8.8
@@ -40,7 +45,10 @@ spec:
         fsGroup: 10000
       containers:
         - name: karpenter-sqs-subscriber
-          image:  $AWS_ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com/zonalautoshiftkarpenter
+          image: $AWS_ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com/zonalautoshiftkarpenter
+          # Uncomment the lines below to enable the do-not-disrupt feature
+          # command: ["/sns-subscriber"]
+          # args: ["--enable-do-not-disrupt"]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

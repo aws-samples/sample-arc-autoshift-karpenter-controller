@@ -28,6 +28,7 @@ var (
         zoneMutex   sync.RWMutex
         clusterZones []string
         clusterZonesMutex sync.RWMutex
+        doNotDisruptEnabled bool // Flag to enable/disable do-not-disrupt feature
 )
 
 // SQSMessage represents the structure of an SQS message from EventBridge
@@ -176,6 +177,16 @@ func main() {
         // Handle health check flag
         if len(os.Args) > 1 && os.Args[1] == "-health" {
                 os.Exit(0)
+        }
+
+        // Parse command-line arguments for do-not-disrupt feature
+        doNotDisruptEnabled = false
+        for i := 1; i < len(os.Args); i++ {
+                if os.Args[i] == "--enable-do-not-disrupt" || os.Args[i] == "-d" {
+                        doNotDisruptEnabled = true
+                        log.Println("[main] do-not-disrupt feature enabled via command-line argument")
+                        break
+                }
         }
 
         var err error
@@ -641,6 +652,78 @@ func updateKarpenterNodePool(event Event) {
                 return
         }
 
+        // Check if do-not-disrupt feature is enabled
+        if doNotDisruptEnabled {
+                log.Println("[updateKarpenterNodePool] do-not-disrupt feature enabled")
+
+                // Get zone name from zone ID
+                awayZoneName := getZoneNameFromZoneId(awayFrom, event.Region)
+                if awayZoneName == "" {
+                        log.Printf("[updateKarpenterNodePool] Failed to get zone name for zone ID: %s", awayFrom)
+                        // Continue with zone ID if zone name is not available
+                        awayZoneName = awayFrom
+                }
+
+                // Step 1: Get the list of nodes in the impaired AZ
+                log.Printf("[updateKarpenterNodePool] Getting nodes in impaired AZ: %s", awayZoneName)
+                nodes, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{
+                        LabelSelector: fmt.Sprintf("topology.kubernetes.io/zone=%s", awayZoneName),
+                })
+                if err != nil {
+                        log.Printf("[updateKarpenterNodePool] Failed to list nodes in AZ %s: %v", awayZoneName, err)
+                } else {
+                        log.Printf("[updateKarpenterNodePool] Found %d nodes in impaired AZ %s", len(nodes.Items), awayZoneName)
+
+                        // Step 2: Apply do-not-disrupt label and cordon nodes
+                        for _, node := range nodes.Items {
+                                log.Printf("[updateKarpenterNodePool] Processing node: %s", node.Name)
+
+                                // Apply do-not-disrupt label
+                                if node.Labels == nil {
+                                        node.Labels = make(map[string]string)
+                                }
+                                node.Labels["karpenter.sh/do-not-disrupt"] = "true"
+
+                                // Cordon the node
+                                node.Spec.Unschedulable = true
+
+                                // Update the node
+                                _, err := clientset.CoreV1().Nodes().Update(context.TODO(), &node, metav1.UpdateOptions{})
+                                if err != nil {
+                                        log.Printf("[updateKarpenterNodePool] Failed to update node %s: %v", node.Name, err)
+                                } else {
+                                        log.Printf("[updateKarpenterNodePool] Successfully labeled and cordoned node %s", node.Name)
+                                }
+
+                                // Step 3: Get pods running on this node and add do-not-disrupt annotation
+                                pods, err := clientset.CoreV1().Pods("").List(context.TODO(), metav1.ListOptions{
+                                        FieldSelector: fmt.Sprintf("spec.nodeName=%s", node.Name),
+                                })
+                                if err != nil {
+                                        log.Printf("[updateKarpenterNodePool] Failed to list pods on node %s: %v", node.Name, err)
+                                        continue
+                                }
+
+                                log.Printf("[updateKarpenterNodePool] Found %d pods on node %s", len(pods.Items), node.Name)
+                                for _, pod := range pods.Items {
+                                        if pod.Annotations == nil {
+                                                pod.Annotations = make(map[string]string)
+                                        }
+                                        pod.Annotations["karpenter.sh/do-not-disrupt"] = "true"
+
+                                        _, err := clientset.CoreV1().Pods(pod.Namespace).Update(context.TODO(), &pod, metav1.UpdateOptions{})
+                                        if err != nil {
+                                                log.Printf("[updateKarpenterNodePool] Failed to add do-not-disrupt annotation to pod %s/%s: %v", pod.Namespace, pod.Name, err)
+                                        } else {
+                                                log.Printf("[updateKarpenterNodePool] Added do-not-disrupt annotation to pod %s/%s", pod.Namespace, pod.Name)
+                                        }
+                                }
+                        }
+                }
+        } else {
+                log.Println("[updateKarpenterNodePool] do-not-disrupt feature disabled, skipping node labeling and cordoning")
+        }
+
         log.Println("[updateKarpenterNodePool] Retrieving Karpenter node pools...")
         nodePools, err := clientset.RESTClient().Get().AbsPath("/apis/karpenter.sh/v1/nodepools").DoRaw(context.TODO())
         if err != nil {
@@ -757,10 +840,15 @@ func updateKarpenterNodePool(event Event) {
                                         Nodes string `json:"nodes"`
                                 }, 0)
                                 if len(pool.Spec.Disruption.Budgets) > 0 {
+                                        budgetValue := pool.Spec.Disruption.Budgets[0].Nodes
+                                        // if doNotDisruptEnabled {
+                                        //         budgetValue = "0"
+                                        //         log.Printf("[updateKarpenterNodePool] Setting disruption budget to 0 for node pool %s (do-not-disrupt enabled)", newNodePoolName)
+                                        // }
                                         nodePoolItem.Spec.Disruption.Budgets = append(nodePoolItem.Spec.Disruption.Budgets, struct {
                                                 Nodes string `json:"nodes"`
                                         }{
-                                                Nodes: pool.Spec.Disruption.Budgets[0].Nodes,
+                                                Nodes: budgetValue,
                                         })
                                 }
                                 nodePoolItem.Spec.Disruption.ConsolidateAfter = pool.Spec.Disruption.ConsolidateAfter
@@ -809,6 +897,12 @@ func updateKarpenterNodePool(event Event) {
                                                         log.Printf("[updateKarpenterNodePool] Updating node pool %s to remove AZ %s", pool.Metadata.Name, awayZoneName)
                                                         pool.Spec.Template.Spec.Requirements[i].Values = filteredZones
 
+                                                        // Set disruption budget to 0 if do-not-disrupt is enabled
+                                                        // if doNotDisruptEnabled && len(pool.Spec.Disruption.Budgets) > 0 {
+                                                        //         pool.Spec.Disruption.Budgets[0].Nodes = "0"
+                                                        //         log.Printf("[updateKarpenterNodePool] Setting disruption budget to 0 for node pool %s (do-not-disrupt enabled)", pool.Metadata.Name)
+                                                        // }
+
                                                         // Create the update payload
                                                         updatePayload := map[string]interface{}{
                                                                 "spec": map[string]interface{}{
@@ -817,6 +911,7 @@ func updateKarpenterNodePool(event Event) {
                                                                                         "requirements": pool.Spec.Template.Spec.Requirements,
                                                                                 },
                                                                         },
+                                                                        "disruption": pool.Spec.Disruption,
                                                                 },
                                                         }
 
@@ -872,6 +967,12 @@ func updateKarpenterNodePool(event Event) {
                                                 Values:   updatedZones,
                                         })
                                         
+                                        // Set disruption budget to 0 if do-not-disrupt is enabled
+                                        // if doNotDisruptEnabled && len(pool.Spec.Disruption.Budgets) > 0 {
+                                        //         pool.Spec.Disruption.Budgets[0].Nodes = "0"
+                                        //         log.Printf("[updateKarpenterNodePool] Setting disruption budget to 0 for node pool %s (do-not-disrupt enabled)", pool.Metadata.Name)
+                                        // }
+
                                         // Create the update payload
                                         updatePayload := map[string]interface{}{
                                                 "spec": map[string]interface{}{
@@ -880,6 +981,7 @@ func updateKarpenterNodePool(event Event) {
                                                                         "requirements": pool.Spec.Template.Spec.Requirements,
                                                                 },
                                                         },
+                                                        "disruption": pool.Spec.Disruption,
                                                 },
                                         }
 
@@ -959,6 +1061,12 @@ func updateKarpenterNodePool(event Event) {
                                                         pool.Metadata.Name, awayZoneName)
                                                 pool.Spec.Template.Spec.Requirements[i].Values = filteredZones
 
+                                                // Set disruption budget to 0 if do-not-disrupt is enabled
+                                                // if doNotDisruptEnabled && len(pool.Spec.Disruption.Budgets) > 0 {
+                                                //         pool.Spec.Disruption.Budgets[0].Nodes = "0"
+                                                //         log.Printf("[updateKarpenterNodePool] Setting disruption budget to 0 for node pool %s (do-not-disrupt enabled)", pool.Metadata.Name)
+                                                // }
+
                                                 // Create the update payload
                                                 updatePayload := map[string]interface{}{
                                                         "spec": map[string]interface{}{
@@ -967,6 +1075,7 @@ func updateKarpenterNodePool(event Event) {
                                                                                 "requirements": pool.Spec.Template.Spec.Requirements,
                                                                         },
                                                                 },
+                                                                "disruption": pool.Spec.Disruption,
                                                         },
                                                 }
 
@@ -1044,6 +1153,12 @@ func updateKarpenterNodePool(event Event) {
                                         Values:   updatedZones,
                                 })
                                 
+                                // Set disruption budget to 0 if do-not-disrupt is enabled
+                                // if doNotDisruptEnabled && len(pool.Spec.Disruption.Budgets) > 0 {
+                                //         pool.Spec.Disruption.Budgets[0].Nodes = "0"
+                                //         log.Printf("[updateKarpenterNodePool] Setting disruption budget to 0 for node pool %s (do-not-disrupt enabled)", pool.Metadata.Name)
+                                // }
+
                                 // Create the update payload
                                 updatePayload := map[string]interface{}{
                                         "spec": map[string]interface{}{
@@ -1052,6 +1167,7 @@ func updateKarpenterNodePool(event Event) {
                                                                 "requirements": pool.Spec.Template.Spec.Requirements,
                                                         },
                                                 },
+                                                "disruption": pool.Spec.Disruption,
                                         },
                                 }
 
@@ -1135,6 +1251,73 @@ func restoreKarpenterNodePool(event Event) {
                 return
         }
 
+        // Get zone name from zone ID (needed for both do-not-disrupt and zone restoration)
+        awayZoneName := getZoneNameFromZoneId(awayFrom, event.Region)
+        if awayZoneName == "" {
+                log.Printf("[restoreKarpenterNodePool] Failed to get zone name for zone ID: %s, using zone ID as fallback", awayFrom)
+                awayZoneName = awayFrom
+        }
+
+        // Check if do-not-disrupt feature is enabled
+        if doNotDisruptEnabled {
+                log.Println("[restoreKarpenterNodePool] do-not-disrupt feature enabled")
+
+                // Remove do-not-disrupt label and uncordon nodes in the restored AZ
+                log.Printf("[restoreKarpenterNodePool] Getting nodes in restored AZ: %s", awayZoneName)
+                nodes, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{
+                        LabelSelector: fmt.Sprintf("topology.kubernetes.io/zone=%s,karpenter.sh/do-not-disrupt=true", awayZoneName),
+                })
+                if err != nil {
+                        log.Printf("[restoreKarpenterNodePool] Failed to list nodes in AZ %s: %v", awayZoneName, err)
+                } else {
+                        log.Printf("[restoreKarpenterNodePool] Found %d nodes with do-not-disrupt label in AZ %s", len(nodes.Items), awayZoneName)
+
+                        for _, node := range nodes.Items {
+                                log.Printf("[restoreKarpenterNodePool] Processing node: %s", node.Name)
+
+                                // Remove do-not-disrupt annotations from pods on this node
+                                pods, err := clientset.CoreV1().Pods("").List(context.TODO(), metav1.ListOptions{
+                                        FieldSelector: fmt.Sprintf("spec.nodeName=%s", node.Name),
+                                })
+                                if err != nil {
+                                        log.Printf("[restoreKarpenterNodePool] Failed to list pods on node %s: %v", node.Name, err)
+                                } else {
+                                        for _, pod := range pods.Items {
+                                                if pod.Annotations != nil {
+                                                        if _, exists := pod.Annotations["karpenter.sh/do-not-disrupt"]; exists {
+                                                                delete(pod.Annotations, "karpenter.sh/do-not-disrupt")
+                                                                _, err := clientset.CoreV1().Pods(pod.Namespace).Update(context.TODO(), &pod, metav1.UpdateOptions{})
+                                                                if err != nil {
+                                                                        log.Printf("[restoreKarpenterNodePool] Failed to remove do-not-disrupt annotation from pod %s/%s: %v", pod.Namespace, pod.Name, err)
+                                                                } else {
+                                                                        log.Printf("[restoreKarpenterNodePool] Removed do-not-disrupt annotation from pod %s/%s", pod.Namespace, pod.Name)
+                                                                }
+                                                        }
+                                                }
+                                        }
+                                }
+
+                                // Remove do-not-disrupt label
+                                if node.Labels != nil {
+                                        delete(node.Labels, "karpenter.sh/do-not-disrupt")
+                                }
+
+                                // Uncordon the node
+                                node.Spec.Unschedulable = false
+
+                                // Update the node
+                                _, err = clientset.CoreV1().Nodes().Update(context.TODO(), &node, metav1.UpdateOptions{})
+                                if err != nil {
+                                        log.Printf("[restoreKarpenterNodePool] Failed to update node %s: %v", node.Name, err)
+                                } else {
+                                        log.Printf("[restoreKarpenterNodePool] Successfully removed label and uncordoned node %s", node.Name)
+                                }
+                        }
+                }
+        } else {
+                log.Println("[restoreKarpenterNodePool] do-not-disrupt feature disabled, skipping node restoration")
+        }
+
         nodePools, err := clientset.RESTClient().Get().AbsPath("/apis/karpenter.sh/v1/nodepools").DoRaw(context.TODO())
         if err != nil {
                 log.Printf("[restoreKarpenterNodePool] Failed to get node pools: %v", err)
@@ -1162,12 +1345,6 @@ func restoreKarpenterNodePool(event Event) {
 
         if err := json.Unmarshal(nodePools, &nodePoolList); err != nil {
                 log.Printf("[restoreKarpenterNodePool] Failed to parse node pools: %v", err)
-                return
-        }
-
-        awayZoneName := getZoneNameFromZoneId(awayFrom, event.Region)
-        if awayZoneName == "" {
-                log.Printf("[restoreKarpenterNodePool] Failed to get zone name for zone ID: %s in region %s. Cannot restore node pool without zone name.", awayFrom, event.Region)
                 return
         }
 
