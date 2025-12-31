@@ -7,7 +7,7 @@ rules:
     resources: ["nodes", "pods"]
     verbs: ["get", "list", "watch", "update", "patch"]
   - apiGroups: ["karpenter.sh"]
-    resources: ["nodepools"]
+    resources: ["nodepools", "nodeclaims"]
     verbs: ["get", "list", "watch", "update", "patch", "create", "delete"]
 
   - apiGroups: ["apiextensions.k8s.io"]

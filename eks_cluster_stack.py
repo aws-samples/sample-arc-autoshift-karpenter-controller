@@ -454,6 +454,9 @@ class EKSClusterStack(Stack):
         with open("./app/rolebinding.yaml", 'r', encoding='utf-8') as stream:
              rolebinding_yaml = yaml.safe_load(stream)
 
+        with open("./app/leader-election-rbac.yaml", 'r', encoding='utf-8') as stream:
+             leader_election_rbac_yaml = list(yaml.safe_load_all(stream))
+
         with open("./app/deployment.yaml", 'r', encoding='utf-8') as stream:
             template = Template(stream.read())
             variables = {
@@ -477,6 +480,10 @@ class EKSClusterStack(Stack):
         self.cluster.add_manifest(f"{construct_id}-app-clusterrole", clusterrole_yaml)
 
         self.cluster.add_manifest(f"{construct_id}-app-rolebinding", rolebinding_yaml)
+
+        # Apply leader election RBAC manifests
+        for i, manifest in enumerate(leader_election_rbac_yaml):
+            self.cluster.add_manifest(f"{construct_id}-leader-election-rbac-{i}", manifest)
 
         # Ensure service account is created before deployment
         dep_yaml_with_dependency = self.cluster.add_manifest(f"{construct_id}-app-deployment", dep_yaml)
