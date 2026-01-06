@@ -960,11 +960,13 @@ func updateKarpenterNodePool(event Event) {
                                         log.Printf("[updateKarpenterNodePool] Failed to create node pool %s: %v", newNodePoolName, err)
                                 }
                                 
-                                // Add NoExecute taint to nodes in the impaired zone
-                                awayZoneName := getZoneNameFromZoneId(awayFrom, event.Region)
-                                if awayZoneName != "" && globalNodeController != nil {
-                                        if err := globalNodeController.TaintNodesInAZ(ctx, awayZoneName); err != nil {
-                                                log.Printf("[updateKarpenterNodePool] Error tainting nodes in AZ %s: %v", awayZoneName, err)
+                                // Add NoExecute taint to nodes in the impaired zone only if do-not-disrupt is disabled
+                                if !doNotDisruptEnabled {
+                                        awayZoneName := getZoneNameFromZoneId(awayFrom, event.Region)
+                                        if awayZoneName != "" && globalNodeController != nil {
+                                                if err := globalNodeController.TaintNodesInAZ(ctx, awayZoneName); err != nil {
+                                                        log.Printf("[updateKarpenterNodePool] Error tainting nodes in AZ %s: %v", awayZoneName, err)
+                                                }
                                         }
                                 }
                         } else {
@@ -1404,8 +1406,9 @@ func restoreKarpenterNodePool(event Event) {
         }
 
         if isAutoMode {
-                // Remove NoExecute taint from nodes in the restored zone
-                if globalNodeController != nil {
+                // Remove NoExecute taint from nodes in the restored zone only if do-not-disrupt is disabled
+                // (taints were only added when do-not-disrupt was disabled)
+                if !doNotDisruptEnabled && globalNodeController != nil {
                         if err := globalNodeController.RemoveTaintFromNodes(context.TODO(), awayZoneName); err != nil {
                                 log.Printf("[restoreKarpenterNodePool] Error removing taint from nodes in AZ %s: %v", awayZoneName, err)
                         }
