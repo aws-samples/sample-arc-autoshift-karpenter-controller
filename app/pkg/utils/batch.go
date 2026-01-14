@@ -7,10 +7,10 @@ import (
 )
 
 // BatchSize defines how many items to process in a batch
-const BatchSize = 20
+const BatchSize = 5
 
 // MaxConcurrentBatches defines the maximum number of batches to process concurrently
-const MaxConcurrentBatches = 5
+const MaxConcurrentBatches = 20
 
 // BatchProcessor processes items in batches with limited concurrency
 // T is a generic type parameter that allows this function to work with any type

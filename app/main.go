@@ -3,6 +3,7 @@ package main
 import (
         "context"
         "encoding/json"
+        "flag"
         "fmt"
         "log"
         "os"
@@ -34,6 +35,11 @@ var (
         doNotDisruptEnabled bool // Flag to enable/disable do-not-disrupt feature
         isLeader bool // Flag to track leader status
         globalNodeController *controller.NodeClaimController // Global controller for node tracking
+        
+        // Kubernetes client configuration flags
+        kubeClientQPS   = flag.Float64("kube-client-qps", 100, "QPS for Kubernetes client")
+        kubeClientBurst = flag.Int("kube-client-burst", 200, "Burst for Kubernetes client")
+        enableDoNotDisrupt = flag.Bool("enable-do-not-disrupt", false, "Enable do-not-disrupt feature")
 )
 
 // SQSMessage represents the structure of an SQS message from EventBridge
@@ -127,6 +133,17 @@ type NodePool struct {
     } `json:"spec"`
 }
 
+// getK8sConfig returns a Kubernetes config with increased QPS and Burst settings
+func getK8sConfig() (*rest.Config, error) {
+        config, err := rest.InClusterConfig()
+        if err != nil {
+                return nil, err
+        }
+        config.QPS = float32(*kubeClientQPS)
+        config.Burst = *kubeClientBurst
+        return config, nil
+}
+
 func init() {
         log.SetOutput(os.Stdout)
         log.SetFlags(log.LstdFlags | log.Lmicroseconds)
@@ -167,7 +184,7 @@ func initializeZoneMapping() error {
         }
         
         // Check if auto mode by looking for CRDs
-        k8sConfig, err := rest.InClusterConfig()
+        k8sConfig, err := getK8sConfig()
         if err != nil {
                 return fmt.Errorf("failed to create cluster config: %v", err)
         }
@@ -187,20 +204,21 @@ func initializeZoneMapping() error {
 }
 
 func main() {
+        // Parse command-line flags
+        flag.Parse()
+        
         // Handle health check flag
         if len(os.Args) > 1 && os.Args[1] == "-health" {
                 os.Exit(0)
         }
 
-        // Parse command-line arguments for do-not-disrupt feature
-        doNotDisruptEnabled = false
-        for i := 1; i < len(os.Args); i++ {
-                if os.Args[i] == "--enable-do-not-disrupt" || os.Args[i] == "-d" {
-                        doNotDisruptEnabled = true
-                        log.Println("[main] do-not-disrupt feature enabled via command-line argument")
-                        break
-                }
+        // Set do-not-disrupt feature from flag
+        doNotDisruptEnabled = *enableDoNotDisrupt
+        if doNotDisruptEnabled {
+                log.Println("[main] do-not-disrupt feature enabled via command-line argument")
         }
+        
+        log.Printf("[main] Kubernetes client config: QPS=%.1f, Burst=%d", *kubeClientQPS, *kubeClientBurst)
 
         var err error
 
@@ -242,7 +260,7 @@ func main() {
         sqsClient := sqs.NewFromConfig(awsCfg)
 
         // Create Kubernetes clientset for leader election
-        k8sConfig, err := rest.InClusterConfig()
+        k8sConfig, err := getK8sConfig()
         if err != nil {
                 log.Fatalf("Failed to create cluster config: %v", err)
         }
@@ -452,7 +470,7 @@ func handleEvent(event Event) {
 
 // CreateNodePool creates a new Karpenter NodePool
 func CreateNodePool(ctx context.Context, namespace string,nodepoolName string, nodePoolSpec []byte) error {
-    k8sConfig, err := rest.InClusterConfig()
+    k8sConfig, err := getK8sConfig()
         if err != nil {
                 log.Printf("[CreateNodePool] Failed to create cluster config: %v", err)
                 return fmt.Errorf("failed to create cluster config: %v", err)
@@ -758,7 +776,7 @@ func updateKarpenterNodePool(event Event) {
         
         log.Printf("[updateKarpenterNodePool] Processing event for AZ: %s", awayFrom)
 
-        k8sConfig, err := rest.InClusterConfig()
+        k8sConfig, err := getK8sConfig()
         if err != nil {
                 log.Printf("[updateKarpenterNodePool] Failed to create cluster config: %v", err)
                 return
@@ -1336,7 +1354,7 @@ func restoreKarpenterNodePool(event Event) {
         
         log.Printf("[restoreKarpenterNodePool] Processing autoshift completed event for AZ: %s", awayFrom)
 
-        k8sConfig, err := rest.InClusterConfig()
+        k8sConfig, err := getK8sConfig()
         if err != nil {
                 log.Printf("[restoreKarpenterNodePool] Failed to create cluster config: %v", err)
                 return

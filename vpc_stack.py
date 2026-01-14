@@ -22,12 +22,12 @@ class VpcStack(Stack):
                 ec2.SubnetConfiguration(
                     name="Public",
                     subnet_type=ec2.SubnetType.PUBLIC,
-                    cidr_mask=24
+                    cidr_mask=20
                 ),
                 ec2.SubnetConfiguration(
                     name="Private",
                     subnet_type=ec2.SubnetType.PRIVATE_WITH_NAT,
-                    cidr_mask=24
+                    cidr_mask=20
                 ),
             ],
             # Create a NAT Gateway in each AZ

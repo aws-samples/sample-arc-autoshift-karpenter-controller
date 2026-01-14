@@ -49,6 +49,12 @@ spec:
           # Uncomment the lines below to enable the do-not-disrupt feature
           # command: ["/sns-subscriber"]
           # args: ["--enable-do-not-disrupt"]
+          #
+          # To customize Kubernetes client performance (defaults: QPS=100, Burst=200):
+          # args: ["--kube-client-qps=50", "--kube-client-burst=100"]
+          #
+          # To enable both do-not-disrupt and custom client settings:
+          # args: ["--enable-do-not-disrupt", "--kube-client-qps=150", "--kube-client-burst=300"]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
