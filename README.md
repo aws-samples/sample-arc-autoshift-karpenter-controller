@@ -116,8 +116,7 @@ The controller uses a batching method when applying labels, annotations, and tai
 
 We've exposed the --kube-client-qps and --kube-client-burst parameters as command line flags. These flags can be used override the client Go's defaults of 5 and 10 respectively. We've set the default values for these parameters to 100 (QPS) and 200 (Burst). If you need to modify these values, follow the example below: 
 
-```
-...
+```yaml
    command: ["/sns-subscriber"]
    # To customize Kubernetes client performance (defaults: QPS=100, Burst=200):
    args: ["--kube-client-qps=50", "--kube-client-burst=100"]
