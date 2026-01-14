@@ -110,6 +110,19 @@ args:
 
 By default, this feature is **disabled**. The application will only modify nodepools without touching individual nodes.
 
+## Performance Tuning
+
+The controller uses a batching method when applying labels, annotations, and taints to nodes. This was done to prevent the controller from overwhelming the Kubernetes API in large clusters. There are 2 parameters that can be adjusted to control the batch size and the parallelization: BatchSize and MaxConcurrentBatches. The defaults for these values are set to 5 and 20 respectively. While we don't think it'll be necessary to adjust these values, they can be found in the batch.go package. 
+
+We've exposed the --kube-client-qps and --kube-client-burst parameters as command line flags. These flags can be used override the client Go's defaults of 5 and 10 respectively. We've set the default values for these parameters to 100 (QPS) and 200 (Burst). If you need to modify these values, follow the example below: 
+
+```
+...
+   command: ["/sns-subscriber"]
+   # To customize Kubernetes client performance (defaults: QPS=100, Burst=200):
+   args: ["--kube-client-qps=50", "--kube-client-burst=100"]
+```
+
 ## Security
 See [CONTRIBUTING](./CONTRIBUTING.md) for more information.
 
